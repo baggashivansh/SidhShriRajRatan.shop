@@ -1,3 +1,7 @@
+// script.js — full updated script (drop-in). Preserves original image sizes,
+// supports gallery + testimonials auto scrollers, avoids double-cloning, supports lazy-load,
+// drag on gallery, pause-on-hover, and robust recompute logic.
+
 document.addEventListener("DOMContentLoaded", () => {
   initCurrentYear();
   initGalleryScroller();
@@ -5,72 +9,145 @@ document.addEventListener("DOMContentLoaded", () => {
   initLazyImages();
 });
 
-/* =============================== ==========
+/* ===============================
    Footer year
-========================================= */
-
+   =============================== */
 function initCurrentYear() {
   const yearEl = document.getElementById("year");
-  if (yearEl) {
-    yearEl.textContent = new Date().getFullYear();
-  }
+  if (yearEl) yearEl.textContent = new Date().getFullYear();
 }
 
-/* =========================================
-   Generic horizontal infinite scroller
-   Used for:
-   - Gallery (drag + arrows)
-   - Testimonials (auto only)
-========================================= */
-
+/* ======================================================
+   createHorizontalLooper (single, robust implementation)
+   - preserves image sizing (does not overwrite img width/height)
+   - detects pre-duplicated markup and avoids double-cloning
+   - optional lazy-loading of images (uses data-src if present)
+   - supports pointer/touch drag and pause-on-hover
+   ====================================================== */
 function createHorizontalLooper(options) {
   const {
-    wrapper,          // HTMLElement (outer container)
-    track,            // HTMLElement (inner flex track)
-    autoSpeed = 0.3, // px per millisecond
+    wrapper,
+    track,
+    autoSpeed = 0.3,    // px per millisecond
     allowDrag = true,
-    pauseOnHover = true
-  } = options;
+    pauseOnHover = true,
+    enableLazy = true
+  } = options || {};
 
   if (!wrapper || !track) return null;
 
-  // Ensure required styles
-  wrapper.style.overflow = "hidden";
-  track.style.display = "flex";
-  track.style.willChange = "transform";
+  // minimal required styles that do not change image sizes
+  wrapper.style.overflow = wrapper.style.overflow || "hidden";
+  track.style.display = track.style.display || "flex";
+  track.style.willChange = track.style.willChange || "transform";
 
-  const originalItems = Array.from(track.children);
-  if (!originalItems.length) return null;
+  // children snapshot at start
+  let children = Array.from(track.children);
+  if (!children.length) return null;
 
-  // Duplicate items once so we can loop seamlessly
-  originalItems.forEach((item) => {
-    const clone = item.cloneNode(true);
-    track.appendChild(clone);
-  });
+  // detect if track already contains duplicated sequence (first half equals second half)
+  function isAlreadyDuplicated(arr) {
+    const n = arr.length;
+    if (n < 2 || n % 2 !== 0) return false;
+    const half = n / 2;
+    for (let i = 0; i < half; i++) {
+      if (arr[i].outerHTML !== arr[i + half].outerHTML) return false;
+    }
+    return true;
+  }
 
-  let translateX = 0;               // current position
-  let lastTime = performance.now(); // last frame time
-  let widthHalf = track.getBoundingClientRect().width / 2; // width of original set
+  let originalCount = children.length;
+  if (isAlreadyDuplicated(children)) {
+    originalCount = children.length / 2;
+    children = children.slice(0, originalCount);
+  } else {
+    // clone original set once
+    const snapshot = children.slice();
+    snapshot.forEach(item => {
+      const clone = item.cloneNode(true);
+      track.appendChild(clone);
+    });
+    children = Array.from(track.children).slice(0, snapshot.length);
+    originalCount = snapshot.length;
+  }
 
-  // Update width on resize (and a bit after images load)
-  function recalcWidth() {
-    const rect = track.getBoundingClientRect();
-    if (rect.width > 0) {
-      widthHalf = rect.width / 2;
+  // lazy-prep images without changing sizing
+  if (enableLazy) {
+    const imgs = track.querySelectorAll("img");
+    imgs.forEach(img => {
+      if (!img.hasAttribute("loading")) img.setAttribute("loading", "lazy");
+      if (!img.dataset.src && img.src) img.dataset.src = img.src;
+      img.draggable = false;
+    });
+
+    // IntersectionObserver scoped to wrapper for lazy loading
+    try {
+      const io = new IntersectionObserver((entries, obs) => {
+        entries.forEach(e => {
+          if (e.isIntersecting) {
+            const el = e.target;
+            const src = el.dataset && el.dataset.src;
+            if (src && el.src !== src) el.src = src;
+            obs.unobserve(el);
+          }
+        });
+      }, { root: wrapper, rootMargin: "400px" });
+
+      track.querySelectorAll("img").forEach(img => io.observe(img));
+    } catch (e) {
+      // silently fallback if IO not available
     }
   }
-  window.addEventListener("resize", recalcWidth);
-  setTimeout(recalcWidth, 500);
-  setTimeout(recalcWidth, 1200);
 
-  // State flags
+  // helpers to compute width of original set
+  function getGapPx(el) {
+    try {
+      const s = window.getComputedStyle(el).gap;
+      return s ? parseFloat(s) : 0;
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  function computeOriginalWidth() {
+    const gap = getGapPx(track);
+    const cur = Array.from(track.children).slice(0, originalCount);
+    const measured = cur.map(el => el.getBoundingClientRect().width || 0);
+    const sum = measured.reduce((a, b) => a + b, 0);
+    return sum + Math.max(0, (cur.length - 1)) * gap;
+  }
+
+  let widthOriginal = computeOriginalWidth();
+
+  function recalcWidth() {
+    const w = computeOriginalWidth();
+    if (w > 0) widthOriginal = w;
+  }
+
+  // re-run on common events
+  window.addEventListener("resize", recalcWidth);
+  window.addEventListener("orientationchange", recalcWidth);
+  setTimeout(recalcWidth, 200);
+  setTimeout(recalcWidth, 800);
+  setTimeout(recalcWidth, 1600);
+
+  if ("ResizeObserver" in window) {
+    try {
+      const ro = new ResizeObserver(recalcWidth);
+      ro.observe(track);
+      ro.observe(wrapper);
+    } catch (e) {}
+  }
+
+  // animation state
+  let translateX = 0;
+  let lastTime = performance.now();
   let isDragging = false;
   let isHovering = false;
   let dragStartX = 0;
   let dragStartTranslate = 0;
   let currentAutoSpeed = autoSpeed;
 
-  // Main animation loop
   function loop(now) {
     const dt = now - lastTime;
     lastTime = now;
@@ -79,10 +156,9 @@ function createHorizontalLooper(options) {
       translateX -= currentAutoSpeed * dt;
     }
 
-    // Wrap around to create infinite loop
-    if (widthHalf > 0) {
-      if (translateX <= -widthHalf) translateX += widthHalf;
-      if (translateX >= 0) translateX -= widthHalf;
+    if (widthOriginal > 0) {
+      if (translateX <= -widthOriginal) translateX += widthOriginal;
+      if (translateX >= 0) translateX -= widthOriginal;
     }
 
     track.style.transform = `translateX(${Math.round(translateX)}px)`;
@@ -90,26 +166,24 @@ function createHorizontalLooper(options) {
   }
   requestAnimationFrame(loop);
 
-  /* ----- Drag & touch (optional) ----- */
-
+  /* Drag & touch handling (preserves img sizing) */
   if (allowDrag) {
     track.addEventListener("pointerdown", (e) => {
-      // Prevent native browser gestures (image drag / gesture start)
-      // without this, touch gestures may be intercepted by the UA.
+      if (e.button && e.button !== 0) return;
       e.preventDefault();
-
       isDragging = true;
-      dragStartX = e.clientX;
+      dragStartX = e.clientX || e.pageX;
       dragStartTranslate = translateX;
       track.style.cursor = "grabbing";
       currentAutoSpeed = 0;
-      try { track.setPointerCapture(e.pointerId); } catch (_) {}
+      try { track.setPointerCapture && track.setPointerCapture(e.pointerId); } catch (_) {}
     });
 
     track.addEventListener("pointermove", (e) => {
       if (!isDragging) return;
-      const deltaX = e.clientX - dragStartX;
-      translateX = dragStartTranslate + deltaX;
+      const clientX = e.clientX || e.pageX;
+      const delta = clientX - dragStartX;
+      translateX = dragStartTranslate + delta;
     });
 
     function endDrag(e) {
@@ -117,54 +191,49 @@ function createHorizontalLooper(options) {
       isDragging = false;
       track.style.cursor = "";
       currentAutoSpeed = autoSpeed;
-      try { track.releasePointerCapture && track.releasePointerCapture(e.pointerId); } catch (_) {}
+      try { e && e.pointerId && track.releasePointerCapture && track.releasePointerCapture(e.pointerId); } catch (_) {}
     }
 
     track.addEventListener("pointerup", endDrag);
     track.addEventListener("pointercancel", endDrag);
     track.addEventListener("pointerleave", endDrag);
 
-    // Fallback for environments without Pointer Events (older Safari)
+    // fallback for older browsers without PointerEvent
     if (!window.PointerEvent) {
-      track.addEventListener('touchstart', (ev) => {
-        const t = ev.touches[0];
+      track.addEventListener("touchstart", (ev) => {
+        const t = ev.touches && ev.touches[0];
+        if (!t) return;
         isDragging = true;
         dragStartX = t.clientX;
         dragStartTranslate = translateX;
         currentAutoSpeed = 0;
       }, { passive: false });
 
-      track.addEventListener('touchmove', (ev) => {
+      track.addEventListener("touchmove", (ev) => {
         if (!isDragging) return;
-        ev.preventDefault(); // keep horizontal dragging from becoming a native pan
-        const t = ev.touches[0];
-        const deltaX = t.clientX - dragStartX;
-        translateX = dragStartTranslate + deltaX;
+        ev.preventDefault();
+        const t = ev.touches && ev.touches[0];
+        if (!t) return;
+        const delta = t.clientX - dragStartX;
+        translateX = dragStartTranslate + delta;
       }, { passive: false });
 
-      track.addEventListener('touchend', () => {
+      track.addEventListener("touchend", () => {
         isDragging = false;
         currentAutoSpeed = autoSpeed;
       });
-      track.addEventListener('touchcancel', () => {
+      track.addEventListener("touchcancel", () => {
         isDragging = false;
         currentAutoSpeed = autoSpeed;
       });
     }
   }
 
-  /* ----- Pause on hover (optional) ----- */
-
   if (pauseOnHover) {
-    wrapper.addEventListener("mouseenter", () => {
-      isHovering = true;
-    });
-    wrapper.addEventListener("mouseleave", () => {
-      isHovering = false;
-    });
+    wrapper.addEventListener("mouseenter", () => { isHovering = true; });
+    wrapper.addEventListener("mouseleave", () => { isHovering = false; });
   }
 
-  // Return API for manual nudges (next/prev buttons)
   function getItemWidth() {
     const first = track.querySelector(":scope > *");
     return first ? first.getBoundingClientRect().width : 280;
@@ -172,47 +241,40 @@ function createHorizontalLooper(options) {
 
   return {
     nudge(direction = 1, factor = 0.95) {
-      // direction: 1 = next (left), -1 = prev (right)
       const w = getItemWidth();
       translateX -= direction * w * factor;
-    }
+    },
+    _recompute() { recalcWidth(); }
   };
 }
 
-/* =========================================
-   Gallery: auto + drag + arrows
-========================================= */
-
+/* ======================================================
+   Gallery initializer
+   - supports IDs (#galleryWrapper / #galleryTrack) or class fallback (.gallery-wrapper / .gallery-track)
+   - preserves image size (does not set img width/height)
+   ====================================================== */
 function initGalleryScroller() {
-  const wrapper = document.getElementById("galleryWrapper");
-  const track = document.getElementById("galleryTrack");
-  const prevBtn = document.getElementById("galleryPrev");
-  const nextBtn = document.getElementById("galleryNext");
+  const wrapper = document.getElementById("galleryWrapper") || document.querySelector(".gallery-wrapper");
+  const track = document.getElementById("galleryTrack") || document.querySelector(".gallery-track");
 
-  // disable image dragging/select for elements inside our tracks
-  disableImageDragAndSelect('#galleryTrack, #testimonialsTrack');
+  if (!wrapper || !track) return;
+
+  disableImageDragAndSelect("#galleryTrack img, #testimonialsTrack img, .gallery-track img, .testimonials-track img");
 
   const loop = createHorizontalLooper({
     wrapper,
     track,
-    autoSpeed: 0.15, // slightly faster than testimonials
+    autoSpeed: 0.15, // adjust px/ms to tune speed
     allowDrag: true,
-    pauseOnHover: true
+    pauseOnHover: true,
+    enableLazy: true
   });
 
   if (!loop) return;
 
-  // Arrow controls
-  if (prevBtn) {
-    prevBtn.addEventListener("click", () => loop.nudge(-1));
-  }
-  if (nextBtn) {
-    nextBtn.addEventListener("click", () => loop.nudge(1));
-  }
-
-  // Keyboard support when wrapper is focused
+  // keyboard support for accessibility (left/right arrows)
   if (wrapper) {
-    wrapper.tabIndex = 0;
+    if (!wrapper.hasAttribute("tabindex")) wrapper.tabIndex = 0;
     wrapper.addEventListener("keydown", (e) => {
       if (e.key === "ArrowLeft") loop.nudge(-1);
       if (e.key === "ArrowRight") loop.nudge(1);
@@ -220,56 +282,89 @@ function initGalleryScroller() {
   }
 }
 
-/* =========================================
-   Testimonials: auto only, pause on hover
-========================================= */
-
+/* ======================================================
+   Testimonials initializer
+   - supports class-based markup from your index (.testimonials-wrapper / .testimonials-track)
+   - avoids double clone and forces recompute after load
+   ====================================================== */
 function initTestimonialsScroller() {
-  const wrapper = document.getElementById("testimonialsWrapper");
-  const track = document.getElementById("testimonialsTrack");
+  const wrapper = document.getElementById("testimonialsWrapper") || document.querySelector(".testimonials-wrapper");
+  const track = document.getElementById("testimonialsTrack") || document.querySelector(".testimonials-track");
 
-  createHorizontalLooper({
+  if (!wrapper || !track) return;
+
+  // prepare images inside testimonials for lazy-load (if any)
+  const imgs = Array.from(track.querySelectorAll("img"));
+  imgs.forEach(img => {
+    if (!img.hasAttribute("loading")) img.setAttribute("loading", "lazy");
+    if (!img.dataset.src && img.src) img.dataset.src = img.src;
+    img.draggable = false;
+  });
+
+  const loop = createHorizontalLooper({
     wrapper,
     track,
-    autoSpeed: 0.1,  // a bit calmer
+    autoSpeed: 0.10,
     allowDrag: false,
-    pauseOnHover: true
+    pauseOnHover: true,
+    enableLazy: true
   });
+
+  if (!loop) return;
+
+  function recomputeSoon() {
+    try { loop._recompute && loop._recompute(); } catch (e) {}
+    setTimeout(() => { try { loop._recompute && loop._recompute(); } catch (e) {} }, 250);
+    setTimeout(() => { try { loop._recompute && loop._recompute(); } catch (e) {} }, 800);
+  }
+
+  imgs.forEach(img => img.addEventListener("load", recomputeSoon, { passive: true }));
+
+  if ("ResizeObserver" in window) {
+    try {
+      const ro = new ResizeObserver(recomputeSoon);
+      ro.observe(track);
+      ro.observe(wrapper);
+    } catch (e) {}
+  }
+
+  window.addEventListener("load", recomputeSoon);
+  window.addEventListener("resize", recomputeSoon);
+  window.addEventListener("orientationchange", recomputeSoon);
+
+  // quick sanity log
+  setTimeout(() => {
+    const visible = Array.from(track.children).some(ch => ch.getBoundingClientRect().width > 0);
+    if (!visible) {
+      console.warn("Testimonials scroller: no visible testimonial items. Ensure testimonials-track children are visible and not pre-duplicated twice.");
+    }
+  }, 900);
 }
 
 /* =========================================
-   Lazy-load images (simple, safe)
-========================================= */
-
+   Global lazy image helper (keeps first few eager)
+   ========================================= */
 function initLazyImages() {
   const images = document.querySelectorAll("img");
   images.forEach((img, index) => {
-    // keep first couple of images eager (logo, hero)
-    if (index <= 2) return;
-    if (!img.hasAttribute("loading")) {
-      img.setAttribute("loading", "lazy");
-    }
+    if (index <= 2) return; // keep first few eager
+    if (!img.hasAttribute("loading")) img.setAttribute("loading", "lazy");
+    if (!img.dataset.src && img.src) img.dataset.src = img.src;
   });
 }
 
 /* =========================================
-   Small utility: disable image dragging/select
-   (keeps pointer events focused on our track)
-========================================= */
-
+   Utility: disable image dragging/select
+   ========================================= */
 function disableImageDragAndSelect(selector = '#galleryTrack img, #testimonialsTrack img') {
   try {
     document.querySelectorAll(selector).forEach(el => {
-      // For <img> elements set draggable=false
-      if (el.tagName && el.tagName.toLowerCase() === 'img') {
-        el.draggable = false;
-      }
-      // CSS-level protections (inline) to avoid selection/drag
-      el.style.userSelect = 'none';
-      el.style.webkitUserDrag = 'none';
-      el.style.MozUserSelect = 'none';
+      if (el.tagName && el.tagName.toLowerCase() === "img") el.draggable = false;
+      el.style.userSelect = "none";
+      el.style.webkitUserDrag = "none";
+      el.style.MozUserSelect = "none";
     });
   } catch (err) {
-    // silent fallback — don't break the rest of the script
+    // silent fallback
   }
 }
