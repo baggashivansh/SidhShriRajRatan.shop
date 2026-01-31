@@ -1,38 +1,43 @@
-# Sidh Shri Raj Ratan Jewellers 💍
+# Sidh Shri Raj Ratan Jewellers
 
-A modern, responsive static website built for **Sidh Shri Raj Ratan Jewellers**, a traditional jewelry store based in Kanpur, India.  
-The website showcases handcrafted gold, diamond, and precious stone jewelry while highlighting the brand’s legacy, trust, and craftsmanship.
+A responsive static website built for a jewellery retail store.  
+The project focuses on clean presentation, usability, and performance for real business use.
 
-🌐 **Live Website:**  
+Live Website  
 https://sidhshrirajratanjewellers.netlify.app
 
----
+## Overview
 
-## ✨ Features
+Sidh Shri Raj Ratan Jewellers is a local retail jewellery business.
+This website was built to showcase jewellery collections and provide clear contact and location information for customers.
 
-- Elegant and clean UI focused on luxury & tradition  
-- Fully responsive design (mobile, tablet, desktop)  
-- Jewelry collections showcase (rings, necklaces, earrings, bracelets)  
-- Business information with address, contact details, and working hours  
-- WhatsApp & Instagram integration for direct customer inquiries  
-- Customer testimonials section  
-- Fast-loading static site deployed on Netlify  
+## Features
 
----
+Jewellery collections showcase  
+Store information and working hours  
+WhatsApp and social contact integration  
+Customer testimonials section  
+Embedded location map  
+Responsive layout across devices
 
-## 🛠 Tech Stack
+## Technical Details
 
-- **HTML5**  
-- **CSS3**  
-- **JavaScript**  
-- **Netlify** (Hosting & Deployment)
+Semantic HTML for structured content  
+Custom CSS for layout and responsiveness  
+Vanilla JavaScript for basic interactivity  
+Optimized static assets for fast load times  
+Deployed using Netlify
 
----
+## Tech Stack
 
-## 📄 License
-This project is created for client/business showcase purposes.
-Reuse or modification should be done with permission from the business owner.
+HTML  
+CSS  
+JavaScript  
+Netlify
 
----
+## Notes
 
-## Made with ❤️ by Shivansh Bagga
+This is a frontend only implementation for a retail business website.
+Backend services using Java and Spring Boot are being developed separately.
+
+Built by Shivansh Bagga
